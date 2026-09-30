@@ -1,0 +1,38 @@
+# Tema base dos dois apps Streamlit (app.py e painel_filas.py). O que o tema
+# não cobre (hero, cards, chips, pills, fundo com gradiente) fica no CSS de
+# ui.py — as cores aqui são as mesmas variáveis --ui-* de lá.
+
+[theme]
+base = "dark"
+primaryColor = "#8b7cf6"             # --ui-accent
+backgroundColor = "#0b0c10"          # --ui-bg
+secondaryBackgroundColor = "#12141b" # --ui-card (inputs, pills, expanders)
+textColor = "#e8e6f0"                # --ui-text
+linkColor = "#c2b9ff"
+borderColor = "#23252f"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "0.75rem"
+buttonRadius = "0.75rem"
+
+# Inter no texto; Fraunces nos títulos (o CSS de ui.py também usa Fraunces
+# pelo nome em .ui-title, .ui-section e nos títulos dos cards — é este
+# headingFont que carrega a fonte).
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
+headingFontWeights = 600
+baseFontSize = 15
+
+# Paleta de status do painel (ui.py: --ui-good, --ui-warn, --ui-crit)
+greenColor = "#0ca30c"
+yellowColor = "#fab219"
+redColor = "#d03b3b"
+violetColor = "#8b7cf6"
+
+# Mesmas cores das filas no painel (extração, embeddings, indexação, concluído)
+chartCategoricalColors = ["#3987e5", "#d95926", "#199e70", "#9085e9", "#f472b6", "#fab219"]
+
+[theme.sidebar]
+backgroundColor = "#0e0f15"
+secondaryBackgroundColor = "#161822"
+borderColor = "#23252f"

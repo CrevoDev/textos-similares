@@ -1,0 +1,131 @@
+x-app: &app
+  build:
+    context: .
+    # O CrevoMQ é dependência por caminho (../CrevoMQ no pyproject.toml);
+    # entra na imagem como contexto extra — ver Dockerfile.
+    additional_contexts:
+      crevomq: ../CrevoMQ
+  # Uma imagem só pra todos os serviços (antes cada um gerava a sua cópia).
+  image: scrap-project:latest
+  environment: &app-env
+    DB_PATH: /app/data/contos.db
+    FILA_DB_PATH: /app/data/fila.db
+    QDRANT_URL: http://qdrant:6333
+    QDRANT_COLLECTION: ${QDRANT_COLLECTION:-contos}
+    MOCK_MODE: ${MOCK_MODE:-false}
+    EMBEDDING_MODEL: ${EMBEDDING_MODEL:-paraphrase-multilingual-MiniLM-L12-v2}
+    REQUEST_INTERVAL_SECONDS: ${REQUEST_INTERVAL_SECONDS:-1.5}
+    USER_AGENT: ${USER_AGENT:-textos-similares/0.1 (uso pessoal; +https://github.com/)}
+    MAX_TENTATIVAS: ${MAX_TENTATIVAS:-5}
+    LOTE_PADRAO: ${LOTE_PADRAO:-50}
+    HF_HOME: /root/.cache/huggingface
+    # Site e regras de filtro: só no .env (não versionado)
+    SITE_BASE_URL: ${SITE_BASE_URL:-}
+    DESCARTE_TAGS: ${DESCARTE_TAGS:-}
+    DESCARTE_PROTEGIDAS: ${DESCARTE_PROTEGIDAS:-}
+    TEMAS_EXCLUIDOS: ${TEMAS_EXCLUIDOS:?defina TEMAS_EXCLUIDOS no .env}
+    # estado da busca v2 (painel lê daqui) — ver busca_v2/
+    BUSCA_V2_DB_PATH: /app/data/busca_v2.db
+  volumes:
+    # A PASTA inteira, não só o arquivo .db — SQLite em modo WAL precisa dos
+    # arquivos -wal/-shm ao lado do .db pra coordenar escritores concorrentes.
+    # Bind-montar só o arquivo faz cada container criar seu PRÓPRIO -wal/-shm
+    # privado — foi exatamente isso que corrompeu o banco duas vezes. Em
+    # /app/data (e não /data) pra valer o mesmo caminho relativo do host:
+    # supervisor.toml aponta pra data/fila.db.
+    - ./data:/app/data
+    # Cache do modelo do sentence-transformers (~470MB) — sem isso, cada
+    # worker de embedding rebaixaria o modelo do zero a cada restart.
+    - hf_cache:/root/.cache/huggingface
+  depends_on:
+    qdrant:
+      condition: service_healthy
+    init:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      # cópia do qdrant_storage/ do host (v1, séries e trechos da busca v2),
+      # feita em 30/09/2026 quando o Smart App Control passou a bloquear o
+      # qdrant.exe no Windows; o volume antigo `qdrant_storage` só tem a v1
+      - qdrant_atual:/qdrant/storage
+    ports:
+      - "6333:6333"  # dashboard/API — http://localhost:6333/dashboard
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Roda uma vez antes de tudo: cria o schema (idempotente) e registra as
+  # filas do CrevoMQ. DDL concorrente de N processos já corrompeu o banco,
+  # por isso centralizado aqui. Não há mais "reset de travados": job de
+  # worker morto volta sozinho quando o lease vence.
+  init:
+    <<: *app
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: "no"
+    command: uv run python scripts/init_schema.py
+
+  # Produtor (varre o sitemap e enfileira), não um consumidor de fila. Sobe,
+  # faz uma varredura e sai; `--loop` mantém rodando pra atualização
+  # periódica (ver scraper/worker_descoberta.py).
+  worker-descoberta:
+    <<: *app
+    restart: "no"
+    command: uv run python -u scraper/worker_descoberta.py --meses ${DESCOBERTA_MESES:-12}
+
+  # Todos os workers (extração, embeddings, indexação, remoção): o
+  # supervisor do CrevoMQ sobe e derruba processos por estágio conforme o
+  # backlog, entre o mín/máx de supervisor.toml. Substitui as réplicas fixas.
+  supervisor:
+    <<: *app
+    command: uv run crevomq-supervisor supervisor.toml
+
+  # API + painel das filas. Porta publicada só no loopback do host: sem
+  # token, não pode ficar alcançável pela rede.
+  crevomq:
+    <<: *app
+    command: uv run crevomq-servidor data/fila.db --host 0.0.0.0 --porta 8420
+    ports:
+      - "127.0.0.1:8420:8420"
+
+  painel:
+    <<: *app
+    environment:
+      <<: *app-env
+      CREVOMQ_URL: http://localhost:8420  # link aberto no navegador do host
+    command: uv run streamlit run painel_filas.py --server.headless true --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+
+  app:
+    <<: *app
+    command: uv run streamlit run app.py --server.headless true --server.port 8503 --server.address 0.0.0.0
+    ports:
+      - "8503:8503"
+
+volumes:
+  qdrant_storage:
+  qdrant_atual:
+    name: scrap-project_qdrant_atual
+    external: true
+  hf_cache:
+
+# ---------------------------------------------------------------------------
+# Uso (com ../CrevoMQ ao lado deste projeto):
+#   mkdir -p data                      # contos.db mora em ./data/contos.db
+#   docker compose up -d --build
+#   docker compose logs -f supervisor
+#
+# Painel filas: http://localhost:8420
+# Painel:       http://localhost:8501
+# App busca:    http://localhost:8503
+# Qdrant UI:    http://localhost:6333/dashboard
+# ---------------------------------------------------------------------------

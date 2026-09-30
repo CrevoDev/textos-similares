@@ -1,0 +1,121 @@
+# Autoescala dos workers (CrevoMQ): por estágio, entre `min` e `max`
+# processos, proporcional ao backlog × tempo médio aprendido (`alvo_s` = em
+# quanto tempo se quer esvaziar a fila). Rode da raiz do projeto:
+#   uv run crevomq-supervisor supervisor.toml
+# Os handlers são os mesmos de pipeline.HANDLERS. As filas precisam estar
+# registradas antes (scripts/init_schema.py).
+
+db = "data/fila.db"
+intervalo_s = 5
+
+[[estagio]]
+fila = "contos"
+estagio = "extracao"
+handler = "scraper.extrair:extrair"
+min = 0
+# Teto de conexões simultâneas ao site: cortesia, não hardware. 10 foi
+# escolha explícita (acima do teto original de 3), ciente do risco de o WAF
+# do site ler como rajada e bloquear o IP.
+max = 10
+alvo_s = 600
+lote = 1
+
+[[estagio]]
+fila = "contos"
+estagio = "embedding"
+handler = "embeddings.gerar:gerar"
+min = 0
+# Cada processo carrega o próprio modelo (~1,3 GB de RAM).
+max = 2
+alvo_s = 300
+lote = 20
+# Só desce depois de 5 min ocioso: recarregar o modelo custa ~10s.
+resfriamento_s = 300
+
+[[estagio]]
+fila = "contos"
+estagio = "indexacao"
+handler = "embeddings.enviar_qdrant:indexar"
+min = 0
+max = 2
+alvo_s = 120
+lote = 20
+
+[[estagio]]
+fila = "delecao"
+estagio = "remocao"
+handler = "descarte:remover"
+min = 0
+# Um só: cada remoção escreve no contos.db, e escritores concorrentes no
+# SQLite só disputariam o lock. Jobs da base existente já trazem 500 textos
+# cada (scripts/descartar.py), por isso lote pequeno.
+max = 1
+alvo_s = 600
+lote = 2
+
+# Séries: um processo por estágio basta — `agrupar` escreve no contos.db e
+# `vetorizar` faz poucas requisições grandes ao Qdrant por job (lote de autores).
+[[estagio]]
+fila = "series"
+estagio = "agrupar"
+handler = "series:agrupar_autores"
+min = 0
+max = 1
+alvo_s = 600
+lote = 5
+
+[[estagio]]
+fila = "series"
+estagio = "vetorizar"
+handler = "series:vetorizar"
+min = 0
+max = 1
+alvo_s = 600
+lote = 5
+
+# Áudio (Fase 11): pré-gera a leitura em voz alta. Um processo só — o Kokoro
+# usa toda a CPU que ganhar (~500 MB de RAM) e gera perto do tempo real; um
+# segundo só disputaria CPU com o app, que gera o texto que está tocando.
+[[estagio]]
+fila = "audio"
+estagio = "sintese"
+handler = "busca.audio:sintetizar_job"
+min = 0
+max = 1
+alvo_s = 3600
+lote = 1
+# Recarregar o modelo custa alguns segundos: espera 5 min ocioso antes de descer.
+resfriamento_s = 300
+
+# Busca v2 (busca_v2/fila.py): vetores dos trechos na máquina local, uma parte
+# do pacote exportado por job. Um processo só — o modelo usa toda a CPU; na
+# base inteira o caminho continua sendo a GPU alugada (LEIAME do pacote).
+[[estagio]]
+fila = "busca_v2"
+estagio = "vetores"
+handler = "busca_v2.fila:vetores"
+min = 0
+max = 1
+alvo_s = 3600
+lote = 1
+resfriamento_s = 300
+
+[[estagio]]
+fila = "busca_v2"
+estagio = "importacao"
+handler = "busca_v2.fila:importacao"
+min = 0
+max = 1
+alvo_s = 600
+lote = 1
+
+# Mesma indexação, um job por texto (pra medir o ritmo no painel).
+[[estagio]]
+fila = "busca_v2_contos"
+estagio = "indexacao"
+handler = "busca_v2.fila:doc"
+min = 0
+max = 1
+alvo_s = 3600
+lote = 1
+resfriamento_s = 300

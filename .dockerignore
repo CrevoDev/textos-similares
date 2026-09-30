@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+contos.db
+contos.db-wal
+contos.db-shm
+data/
+qdrant_local/
+.git/
+*.log
+qdrant_v2_local/
+backup_volumes/
+*.corrompido.*
+tools/
+qdrant_storage/
+hf_cache/

@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+contos.db
+data/
+qdrant_local/
+qdrant_v2_local/
+backup_volumes/
+tools/
+qdrant_storage/
+hf_cache/
+
+# Material específico do site de origem / notas pessoais — não versionar
+fixtures/
+plan.md
+tests/test_descarte.py
+.claude/
+.pytest_cache/
+.qdrant-initialized
